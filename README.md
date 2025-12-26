@@ -221,14 +221,6 @@ The front panel starts SimH with a telnet console on port 3999:
 telnet localhost 3999
 ```
 
-From the console, you can:
-```
-simh> show device          ; List all devices
-simh> show cpu             ; Show CPU state
-simh> examine 1000         ; Examine memory
-simh> set tm0 locked       ; Lock tape drive
-```
-
 ## Running as a Systemd Service
 
 Create `/etc/systemd/system/frontpanel.service`:
