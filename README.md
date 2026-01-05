@@ -16,7 +16,7 @@ The frontpanel program requires `sim_frontpanel.c` and `sim_sock.c` from the Ope
 
 ```bash
 # Clone OpenSIMH repository
-git clone https://github.com/simh/simh.git
+git clone https://github.com/open-simh/simh.git
 
 # Copy required files to frontpanel directory
 cp /path/to/simh/sim_frontpanel.* /path/to/pidp-frontpanel
