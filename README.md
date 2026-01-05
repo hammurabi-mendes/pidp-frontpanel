@@ -66,13 +66,13 @@ The configuration file maps switch register values to system configurations. Eac
 
 **Example configuration file** (`/opt/pidp11/config.txt`):
 ```
-0102, /opt/pidp1111/systems/211bsd, boot.ini, rq0
-0105, /opt/pidp1111/systems/unix5, boot.ini, rk0
-0106, /opt/pidp1111/systems/unix6, boot.ini, rk0
-0107, /opt/pidp1111/systems/unix7, boot.ini, rp0
-0113, /opt/pidp1111/systems/sysiii, boot.ini, rp0
-0115, /opt/pidp1111/systems/sysv, boot.ini, rp0
-0132, /opt/pidp1111/systems/2.11BSD, boot.ini, ra0
+0102, /opt/pidp11/systems/211bsd, boot.ini, rq0
+0105, /opt/pidp11/systems/unix5, boot.ini, rk0
+0106, /opt/pidp11/systems/unix6, boot.ini, rk0
+0107, /opt/pidp11/systems/unix7, boot.ini, rp0
+0113, /opt/pidp11/systems/sysiii, boot.ini, rp0
+0115, /opt/pidp11/systems/sysv, boot.ini, rp0
+0132, /opt/pidp11/systems/2.11BSD, boot.ini, ra0
 ```
 
 **Format details:**
