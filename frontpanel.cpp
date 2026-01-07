@@ -121,6 +121,9 @@ static uint32_t reg_pc = 0;
 static uint16_t reg_ir = 0;
 static uint16_t reg_psw = 0;
 static uint16_t reg_r[8] = {0};
+static uint16_t reg_mmr0;
+static uint16_t reg_mmr3;
+static uint8_t  reg_id_mode;
 
 // Bit sampling arrays for blinkenlights (accumulated bit activity)
 static int bits_pc[22] = {0};
@@ -537,8 +540,18 @@ static void write_state_lights(const bool leds[6][12]) {
 // Simulator helpers
 // =============================================================
 
-static uint32_t pc_inc(uint32_t pc22) {
-	return (pc22 + 1) & ((1u << 22) - 1);
+static uint32_t increment_console_address(uint32_t address) {
+    // Register space: 017777700 - 017777717
+
+    if(address >= 017777700 && address <= 017777717) {
+        address += 1;
+        address = 017777700 + ((address - 017777700) & 017);
+    }
+    else {
+        address += 2;
+    }
+
+    return address & 0x3FFFFF;
 }
 
 static void compute_ksu_from_psw(PanelState &panel_state) {
@@ -551,6 +564,7 @@ static void compute_ksu_from_psw(PanelState &panel_state) {
 	}
 
 	uint32_t mode = (reg_psw >> 14) & 0x3;
+
 	if(mode == 0) {
 		panel_state.flag_kernel = true;
 	}
@@ -562,7 +576,7 @@ static void compute_ksu_from_psw(PanelState &panel_state) {
 	}
 }
 
-static uint32_t select_display_address(uint8_t r1_pos, uint32_t pc, uint32_t console_address) {
+static uint32_t select_display_address_running(uint8_t r1_pos, uint32_t switch_state) {
 	switch(r1_pos) {
 		case 0: // USER_D
 		case 1: // SUPER_D
@@ -570,14 +584,35 @@ static uint32_t select_display_address(uint8_t r1_pos, uint32_t pc, uint32_t con
 		case 4: // USER_I
 		case 5: // SUPER_I
 		case 6: // KERNEL_I
-			return pc;
+			return reg_pc & 0xFFFF;
 		case 3: // CONS_PHY
-			return console_address;
+			return (reg_pc & 0xFFFF) | (switch_state & 0x3F0000);
 		case 7: // PROG_PHY
-			return pc & ((1u << 22) - 1);
-		default:
-			return pc;
+			return reg_pc & 0x3FFFFF;
 	}
+
+	// Should never happen
+	return 0;
+}
+
+static uint32_t select_display_address_paused(uint8_t r1_pos, uint32_t console_address) {
+	switch(r1_pos) {
+		case 0: // USER_D
+		case 1: // SUPER_D
+		case 2: // KERNEL_D
+		case 4: // USER_I
+		case 5: // SUPER_I
+		case 6: // KERNEL_I
+			// 16-bit virtual address
+			return console_address & 0xFFFF;
+		case 3: // CONS_PHY
+		case 7: // PROG_PHY
+			// Physical address
+			return console_address & 0x3FFFFF;
+	}
+
+	// Should never happen
+	return 0;
 }
 
 static uint16_t select_display_register_data(uint32_t switch_state) {
@@ -657,6 +692,9 @@ static SessionResult run_session(const char *binary_path, const ConfigurationEnt
 	sim_panel_add_register(simh_panel, "R4", nullptr, sizeof(reg_r[4]), &reg_r[4]);
 	sim_panel_add_register(simh_panel, "R5", nullptr, sizeof(reg_r[5]), &reg_r[5]);
 	sim_panel_add_register(simh_panel, "SP", nullptr, sizeof(reg_r[6]), &reg_r[6]);
+	sim_panel_add_register(simh_panel, "MMR0", nullptr, sizeof(reg_mmr0), &reg_mmr0);
+	sim_panel_add_register(simh_panel, "MMR3", nullptr, sizeof(reg_mmr3), &reg_mmr3);
+	sim_panel_add_register(simh_panel, "IDMODE", nullptr, sizeof(reg_id_mode), &reg_id_mode);
 
 	// Set up callback for automatic register updates (10ms interval)
 	sim_panel_set_display_callback_interval(simh_panel, display_callback, nullptr, 10000);
@@ -668,6 +706,7 @@ static SessionResult run_session(const char *binary_path, const ConfigurationEnt
 
 	logger->info("Starting main loop (Ctrl+C to exit)...\n");
 
+	bool use_console_address = false;
 	uint32_t console_address = 0;
 	uint32_t prev_console_address = 0;
 
@@ -691,6 +730,7 @@ static SessionResult run_session(const char *binary_path, const ConfigurationEnt
 	while(program_running) {
 		// Scan switches every iteration for responsive rotary encoders
 		bool switches[3][12];
+
 		read_state_switches(switches);
 		decode_state_switches(switches, panel);
 		decode_state_rotary_switches(switches, panel, r1_encoder, r2_encoder);
@@ -765,16 +805,15 @@ static SessionResult run_session(const char *binary_path, const ConfigurationEnt
 		if(registers_updated) {
 			registers_updated = false;
 
-			uint32_t pc = reg_pc & ((1u << 22) - 1);
-
 			OperationalState state = sim_panel_get_state(simh_panel);
 			bool simulator_running = (state == Run);
 
 			// LOAD ADDR: console_address <- switch_register
 			if(!simulator_running && edge_load.falling(panel.flag_load_addr)) {
 				prev_console_address = console_address;
-				console_address = panel.switch_state & ((1u << 22) - 1);
+				console_address = panel.switch_state & 0x3FFFFF;
 				logger->debug("[LOAD] console_address: %06o -> %06o\n", prev_console_address, console_address);
+				use_console_address = true;
 
 				if(use_data_latched) {
 					logger->debug("[LOAD] data latch OFF\n");
@@ -797,7 +836,7 @@ static SessionResult run_session(const char *binary_path, const ConfigurationEnt
 					}
 
 					prev_console_address = console_address;
-					console_address = pc_inc(console_address);
+					console_address = increment_console_address(console_address);
 					logger->debug("[EXAM] console_address: %06o -> %06o\n", prev_console_address, console_address);
 				}
 			}
@@ -818,7 +857,7 @@ static SessionResult run_session(const char *binary_path, const ConfigurationEnt
 					}
 
 					prev_console_address = console_address;
-					console_address = pc_inc(console_address);
+					console_address = increment_console_address(console_address);
 					logger->debug("[DEP] console_address: %06o -> %06o\n", prev_console_address, console_address);
 				}
 			}
@@ -843,6 +882,12 @@ static SessionResult run_session(const char *binary_path, const ConfigurationEnt
 					// Transitioned to halt mode
 					logger->info("[HALT] Entering halt (step) mode\n");
 					sim_panel_exec_halt(simh_panel);
+
+					if(!use_console_address) {
+						logger->debug("[HALT] console address ON\n");
+						use_console_address = true;
+					}
+					console_address = reg_pc & 0x3FFFFF;
 				}
 			}
 			else {
@@ -851,8 +896,13 @@ static SessionResult run_session(const char *binary_path, const ConfigurationEnt
 					logger->info("[ENABLE] Entering enable mode\n");
 					sim_panel_exec_run(simh_panel);
 
+					if(use_console_address) {
+						logger->debug("[ENABLE] console address OFF\n");
+						use_console_address = false;
+					}
+
 					if(use_data_latched) {
-						logger->debug("[HALT] data latch OFF\n");
+						logger->debug("[ENABLE] data latch OFF\n");
 						use_data_latched = false;
 					}
 				}
@@ -863,79 +913,108 @@ static SessionResult run_session(const char *binary_path, const ConfigurationEnt
 				char buffer[32];
 				snprintf(buffer, sizeof(buffer), "%u", console_address);
 
-				logger->info("[START] Setting PC to console_address %06o and running\n", console_address);
+				logger->info("[START] Setting PC to console_address %06o\n", console_address);
 
 				if(sim_panel_set_register_value(simh_panel, "PC", buffer) == 0) {
-					pc = console_address;
 					reg_pc = console_address;
+				}
 
+				// Run only if it is enabled
+				if(panel.flag_enable_halt) {
+					logger->debug("[START] running from new PC\n");
 					sim_panel_exec_run(simh_panel);
 				}
 			}
 
 			// Update status lamps from simulator state
 			compute_ksu_from_psw(panel);
-			panel.flag_run = simulator_running;
 
-			// ADDRESS LED priority:
+			// ADDRESS LED:
 			// 1. CPU not running: console_address
 			// 2. CPU running: show address selected via R1
 			if(!simulator_running) {
-				panel.address = console_address;
+				panel.address = select_display_address_paused(panel.r1_position, console_address);
 				// Console address: no blinkenlights
 				use_blinkenlights = false;
 			}
 			else {
-				panel.address = select_display_address(panel.r1_position, pc, console_address);
-				// Use blinkenlights only when showing PC (not CONS_PHY position 3)
-				use_blinkenlights = (panel.r1_position != 3);
+				panel.address = select_display_address_running(panel.r1_position, panel.switch_state);
+				use_blinkenlights = true;
 			}
 
-			// DATA LED priority
-			// 1. (R2 == DISPLAY REGISTER): show register selected via switch
-			// 2. EXAM/DEP own the data latch: show examined/deposited memory
-			// 3. CPU not running: show switch register
-			// 4. Else: leave unchanged from last state
-			if(panel.r2_position == 3) {
-				panel.data = select_display_register_data(panel.switch_state);
-			}
-			else if(use_data_latched) {
-				panel.data = data_latched;
-			}
-			else if(!simulator_running) {
-				panel.data = (uint16_t) (panel.switch_state & 0xFFFF);
-			}
-			else {
-				// Leave panel.data unchanged
+			// DATA LED:
+			switch(panel.r2_position) {
+				case 0: // DATA_PATHS (shows ALU/SHIFTER output)
+					if(use_data_latched) {
+						// During EXAM/DEP: show the examined/deposited data
+						panel.data = data_latched;
+					}
+					else if(!simulator_running) {
+						// When HALTED (not during EXAM/DEP): show R0
+						panel.data = reg_r[0];
+					}
+					else {
+						// When RUNNING: leave panel.data unchanged
+					}
+
+					break;
+					
+				case 1: // BUS_REG
+					if(!simulator_running) {
+						panel.data = (uint16_t) (panel.switch_state & 0xFFFF);
+					}
+					else {
+						// When running, show the instruction register
+						panel.data = reg_ir;
+					}
+
+					break;
+					
+				case 2: // MU_ADR_FPP_CPU (microaddress)
+					// I don't have access to it
+					panel.data = 0x0000;
+
+					break;
+					
+				case 3: // DISPLAY_REGISTER
+					panel.data = select_display_register_data(panel.switch_state);
+
+					break;
 			}
 
-			panel.flag_addr16 = (pc < (1u << 16));
-			panel.flag_addr18 = !panel.flag_addr16 && (pc < (1u << 18));
-			panel.flag_addr22 = !panel.flag_addr18 && (pc >= (1u << 18));
-			panel.flag_data = false;
-			panel.flag_master = false;
+			panel.flag_addr16 = !(reg_mmr0 & 0x01);  // MMU disabled
+			panel.flag_addr18 = !(reg_mmr3 & 0x10) && (reg_mmr0 & 0x01);  // 18-bit mode
+			panel.flag_addr22 = (reg_mmr3 & 0x10) && (reg_mmr0 & 0x01);   // 22-bit mode
+			panel.flag_data = (reg_id_mode == 1); // 0 == instruction; 1 == data
+			panel.flag_master = !simulator_running;
 			panel.flag_pause = false;
+			panel.flag_run = simulator_running;
 			panel.flag_addr_err = false;
 			panel.flag_par_err = false;
 
 			uint8_t parity_low = 0;
 			uint8_t parity_high = 0;
 
-			if(!use_blinkenlights) {
+			// Parity only for static data and when in DATA_PATHS or BUS_REGISTER modes
+			if(!use_blinkenlights && (panel.r2_position == 0 || panel.r2_position == 1)) {
 				uint16_t data_low = panel.data & 0xFF;
 				uint16_t data_high = (panel.data >> 8) & 0xFF;
 
-				for(int i = 0; i < 16; i++) {
-					parity_low ^= (data_low >> i) & 1;
+				for(int i = 0; i < 8; i++) {
+					parity_low += ((data_low >> i) & 1);
 				}
 
-				for(int i = 0; i < 6; i++) {
-					parity_high ^= (data_high >> i) & 1;
+				for(int i = 0; i < 8; i++) {
+					parity_high += ((data_high >> i) & 1);
 				}
+
+				panel.flag_par_low = !(parity_low % 2);
+				panel.flag_par_high = !(parity_high % 2);
 			}
-
-			panel.flag_par_low = (parity_low == 1);
-			panel.flag_par_high = (parity_high == 1);
+			else {
+				panel.flag_par_low = false;
+				panel.flag_par_high = false;
+			}
 		}
 		else {
 			struct timespec time_specification = {0, WAIT_LOOP_INTERVAL_NS};
@@ -1054,7 +1133,7 @@ int main(int argc, char *argv[]) {
 		read_state_switches(switches);
 		decode_state_switches(switches, panel);
 
-		uint32_t switch_code = panel.switch_state & ((1u << 22) - 1);
+		uint32_t switch_code = panel.switch_state & 0x3FFFFF;
 
 		logger->info("\n[CONFIG] Reading switch code: %06o\n", switch_code);
 
