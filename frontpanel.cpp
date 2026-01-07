@@ -537,8 +537,8 @@ static void write_state_lights(const bool leds[6][12]) {
 // Simulator helpers
 // =============================================================
 
-static uint32_t pc_inc2(uint32_t pc22) {
-	return (pc22 + 2) & ((1u << 22) - 1);
+static uint32_t pc_inc(uint32_t pc22) {
+	return (pc22 + 1) & ((1u << 22) - 1);
 }
 
 static void compute_ksu_from_psw(PanelState &panel_state) {
@@ -782,7 +782,7 @@ static SessionResult run_session(const char *binary_path, const ConfigurationEnt
 				}
 			}
 
-			// EXAM: data <- memory[console_address]; console_address += 2
+			// EXAM: data <- memory[console_address]; console_address++
 			if(!simulator_running && edge_exam.falling(panel.flag_exam)) {
 				uint16_t value = 0;
 
@@ -797,12 +797,12 @@ static SessionResult run_session(const char *binary_path, const ConfigurationEnt
 					}
 
 					prev_console_address = console_address;
-					console_address = pc_inc2(console_address);
+					console_address = pc_inc(console_address);
 					logger->debug("[EXAM] console_address: %06o -> %06o\n", prev_console_address, console_address);
 				}
 			}
 
-			// DEP: memory[console_address] <- switch_register; console_address += 2
+			// DEP: memory[console_address] <- switch_register; console_address++
 			// Note that the switch action of DEP is inverted, but the signal is still 1 on the default state
 			if(!simulator_running && edge_dep.falling(panel.flag_dep)) {
 				uint16_t value = (uint16_t)(panel.switch_state & 0xFFFF);
@@ -818,7 +818,7 @@ static SessionResult run_session(const char *binary_path, const ConfigurationEnt
 					}
 
 					prev_console_address = console_address;
-					console_address = pc_inc2(console_address);
+					console_address = pc_inc(console_address);
 					logger->debug("[DEP] console_address: %06o -> %06o\n", prev_console_address, console_address);
 				}
 			}
