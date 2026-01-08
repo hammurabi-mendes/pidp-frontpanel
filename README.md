@@ -133,28 +133,45 @@ So, set switches to a valid code and wait for automatic retry.
 
 **Control Switches:**
 
-- **LOAD ADDR:** Load switch register value into console address register
-- **EXAM:** Examine memory at console address, increment console address by 2
-- **DEP:** Deposit switch register value to console address, increment console address by 2
+- **LOAD ADDR:** Load switch register value into console address register (only when halted)
+- **EXAM:** Examine memory at console address, then increment:
+  - By 2 for normal memory addresses
+  - By 1 for register space (017777700-017777717)
+- **DEP:** Deposit switch register value to console address, then increment:
+  - By 2 for normal memory addresses
+  - By 1 for register space (017777700-017777717)
 - **CONT:** Single-step execution (ignores of "S INST" / "S BUS CYCLE" switch)
-- **ENABLE/HALT:** Toggle between running and halted states (halted means "paused")
+- **ENABLE/HALT:** Toggle between running and halted states
+  - When switching to HALT: sets console address to current PC
+  - When switching to ENABLE: disables console address display
 - **S_INST/S_BUS_CYCLE:** Non-functional (CONT always single-steps)
-- **START:** Set PC to console address and start running from there
+- **START:** Set PC to console address
+  - If ENABLE mode: also starts execution
+  - If HALT mode: only sets PC without running
 - **TEST:** Dump all panel state to log (for debugging)
 
 **Rotary Encoders:**
 
 - **R1 (8 positions):** Select address display source
-  - Positions 0-2: USER_D, SUPER_D, KERNEL_D: shows PC
-  - Position 3: CONS_PHY: shows console address
-  - Positions 4-6: USER_I, SUPER_I, KERNEL_I: shows PC
-  - Position 7: PROG_PHY: shows PC (22-bit)
+  - When CPU is **running**:
+    - Positions 0-2: USER_D, SUPER_D, KERNEL_D: shows PC (16-bit virtual address)
+    - Position 3: CONS_PHY: shows PC (16-bit) combined with upper 6 bits from switch register
+    - Positions 4-6: USER_I, SUPER_I, KERNEL_I: shows PC (16-bit virtual address)
+    - Position 7: PROG_PHY: shows PC (full 22-bit physical address)
+  - When CPU is **halted**:
+    - Positions 0-2, 4-6: USER_D, SUPER_D, KERNEL_D, USER_I, SUPER_I, KERNEL_I: shows console address (16-bit virtual address)
+    - Positions 3, 7: CONS_PHY, PROG_PHY: shows console address (22-bit physical address)
 
 - **R2 (4 positions):** Select data/display mode
-  - Positions 0-2: DATA_PATHS, BUS_REG, MU_ADR_FPP_CPU: shows data using the following protocol:
-    1. After EXAM/DEP operations: show examined/deposited value
-    2. When halted with no EXAM/DEP: show switch register value
-    3. When running: show last value (unchanged)
+  - Position 0: DATA_PATHS (ALU/SHIFTER output)
+    - During EXAM/DEP: shows examined/deposited value
+    - When halted (no EXAM/DEP): shows R0
+    - When running: shows last value (unchanged)
+  - Position 1: BUS_REG
+    - When halted: shows switch register value
+    - When running: shows instruction register (IR)
+  - Position 2: MU_ADR_FPP_CPU (microaddress)
+    - Not available (shows 0x0000)
   - Position 3: DISPLAY_REGISTER: shows CPU register selected by SR[2:0]
     - SR[2:0] = 0-5: R0-R5
     - SR[2:0] = 6: SP (stack pointer)
@@ -170,22 +187,26 @@ In both restarts, the switch position indicates which system to launch next.
 ### LED Indicators
 
 **Address LEDs (22 bits):**
-- Displays PC when CPU is in enabled mode (with blinkenlights effect showing bus activity)
-- Displays console address when CPU is in halted mode
+- When CPU is running: displays address selected by R1 rotary encoder (with blinkenlights effect showing bus activity)
+- When CPU is halted: displays console address filtered by R1 position (16-bit or 22-bit)
 
 **Data LEDs (16 bits):**
-- Displays selected register when R2 is in DISPLAY REGISTER mode
-- Displays examined/deposited data after EXAM/DEP operations
-- Displays switch register when halted and no data latched
+- Display depends on R2 rotary encoder position (see R2 positions above)
 
 **Status LEDs:**
-- ADDR 22/18/16: Address space indicators
-- KERNEL/SUPER/USER: Current CPU mode
-- RUN: Simulator is executing instructions
-- PAUSE: (reserved)
+- **ADDR 16:** MMU disabled (MMR0 bit 0 clear)
+- **ADDR 18:** 18-bit addressing mode (MMU enabled, MMR3 bit 4 clear)
+- **ADDR 22:** 22-bit addressing mode (MMU enabled, MMR3 bit 4 set)
+- **KERNEL/SUPER/USER:** Current CPU mode (derived from PSW bits 15:14)
+- **DATA:** Processor is performing data access (vs instruction fetch)
+- **MASTER:** CPU is halted
+- **RUN:** CPU is executing instructions
+- **PAUSE:** (reserved)
 
 **Parity LEDs:**
-- PAR LOW/HIGH: Odd parity indicators for data display
+- **PAR LOW/HIGH:** Even parity indicators for low/high byte of data
+- Only active when displaying static data in DATA_PATHS or BUS_REG modes
+- Not shown during blinkenlights (when CPU is running)
 
 ### Typical Usage Example
 
